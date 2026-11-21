@@ -28,7 +28,11 @@ export function AddWord({ onClose, onAdded }: { onClose: () => void; onAdded: (w
     setBusy(false);
     if (!res.ok) {
       setEntry(null);
-      setMessage("Not in the dictionary. You can still write your own definition below.");
+      setMessage(
+        res.status === 503
+          ? "The dictionary is unreachable right now. You can write your own definition below."
+          : "Not in the dictionary. You can still write your own definition below.",
+      );
       return;
     }
     const e: Entry = await res.json();

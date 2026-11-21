@@ -12,7 +12,8 @@ import { lookupWord, pickMeaning } from "./dictionary";
 export const DAILY_MODEL = "google/gemini-2.5-flash-lite";
 
 // Hard cap on AI calls per user per rolling 24h (covers retries after failures).
-export const MAX_AI_CALLS_PER_DAY = 3;
+// Worst case 6 × 30 days × ~$0.0002 ≈ 4¢/month; normally it's one call a day.
+export const MAX_AI_CALLS_PER_DAY = 6;
 
 // Roughly 1 in 3 daily words is humorous-but-usable.
 const HUMOROUS_SHARE = 0.33;
@@ -119,11 +120,25 @@ export async function pickDailyWord(userId: string) {
     .set({ inputTokens: tokens.inputTokens ?? null, outputTokens: tokens.outputTokens ?? null })
     .where(eq(aiUsage.id, usage.id));
 
-  for (const c of output.candidates) {
-    const word = c.word.trim().toLowerCase();
-    if (!word || word.includes(" ") || ctx.known.has(word)) continue;
-    const entry = await lookupWord(word);
-    if (!entry) continue;
+  const fresh = output.candidates.filter((c) => {
+    const w = c.word.trim().toLowerCase();
+    return w && !w.includes(" ") && !ctx.known.has(w);
+  });
+
+  const reasons: string[] = [];
+  let unverified: (typeof fresh)[number] | undefined;
+  for (const c of fresh) {
+    const result = await lookupWord(c.word);
+    if (result.status === "missing") {
+      reasons.push(`${c.word}: not in dictionary`);
+      continue;
+    }
+    if (result.status === "unavailable") {
+      reasons.push(`${c.word}: ${result.reason}`);
+      unverified ??= c;
+      continue;
+    }
+    const { entry } = result;
     const meaning = pickMeaning(entry, c.partOfSpeech);
     return {
       word: entry.word,
@@ -138,5 +153,23 @@ export async function pickDailyWord(userId: string) {
       why: c.why,
     };
   }
-  throw new Error("No candidate could be verified in the dictionary");
+
+  // If the dictionaries were unreachable (not "word doesn't exist"), don't waste
+  // the AI call: use the model's top fresh candidate without a dictionary entry.
+  if (unverified) {
+    console.warn("[daily] dictionaries unavailable, using unverified word", reasons);
+    return {
+      word: unverified.word.trim().toLowerCase(),
+      phonetic: null,
+      audioUrl: null,
+      partOfSpeech: unverified.partOfSpeech,
+      definition: unverified.definition,
+      dictionaryDefinition: null,
+      example: unverified.example,
+      category: ctx.category,
+      domain: ctx.domain,
+      why: unverified.why,
+    };
+  }
+  throw new Error(`No candidate could be verified: ${reasons.join(" | ") || "all candidates already known"}`);
 }

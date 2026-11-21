@@ -9,7 +9,11 @@ export async function GET(req: NextRequest) {
   const word = req.nextUrl.searchParams.get("word")?.trim() ?? "";
   if (!word || word.length > 60) return NextResponse.json({ error: "Enter a word" }, { status: 400 });
 
-  const entry = await lookupWord(word);
-  if (!entry) return NextResponse.json({ error: "Not found in the dictionary" }, { status: 404 });
-  return NextResponse.json(entry);
+  const result = await lookupWord(word);
+  if (result.status === "missing") return NextResponse.json({ error: "Not found in the dictionary" }, { status: 404 });
+  if (result.status === "unavailable") {
+    console.warn("[lookup] dictionaries unavailable", result.reason);
+    return NextResponse.json({ error: "The dictionary is unreachable right now" }, { status: 503 });
+  }
+  return NextResponse.json(result.entry);
 }
