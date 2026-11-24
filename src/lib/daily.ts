@@ -2,25 +2,28 @@ import "server-only";
 import { generateText, Output } from "ai";
 import { and, desc, eq, gt, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { aiUsage, type Category, profiles, skippedWords, words } from "@/db/schema";
+import { aiUsage, profiles, skippedWords, words } from "@/db/schema";
 import { buildPrompt, candidateSchema } from "./daily-prompt";
 import { lookupWord, pickMeaning } from "./dictionary";
+import { wordFrequency } from "./frequency";
 
 // Gemini 2.5 Flash-Lite via AI Gateway: $0.10/M input, $0.40/M output, and on the
-// gateway's free tier. One call a day at ~0.5k in / ~0.5k out ≈ $0.0002 → under 1¢ a month.
+// gateway's free tier. One call a day at ~0.8k in / ~1.2k out ≈ $0.0006 → about 2¢ a month.
 // Tested against gpt-5.4-nano; Flash-Lite calibrated difficulty to the level noticeably better.
 export const DAILY_MODEL = "google/gemini-2.5-flash-lite";
 
 // Hard cap on AI calls per user per rolling 24h (covers retries after failures).
-// Worst case 6 × 30 days × ~$0.0002 ≈ 4¢/month; normally it's one call a day.
+// Worst case 6 × 30 days × ~$0.0006 ≈ 11¢/month; normally it's one call a day.
 export const MAX_AI_CALLS_PER_DAY = 6;
 
 // Replacing a known/skipped word stops this many calls short of the cap, so swapping
 // late at night can't use up tomorrow's word.
 const RESERVED_AI_CALLS = 2;
 
-// Roughly 1 in 3 daily words is humorous-but-usable.
-const HUMOROUS_SHARE = 0.33;
+// Words rarer than this (per million words of English) are too obscure to be useful.
+// For scale: pragmatic 5.9, ubiquitous 2.7, nuance 0.68, obfuscate 0.097 pass;
+// equivocate 0.066, kerfuffle 0.005, tergiversate 0.0006 don't.
+const MIN_FREQUENCY = 0.09;
 
 const DOMAINS = [
   "emotions and inner states",
@@ -44,7 +47,6 @@ async function buildContext(userId: string) {
   const bank = await db
     .select({
       word: words.word,
-      category: words.category,
       domain: words.domain,
       partOfSpeech: words.partOfSpeech,
       source: words.source,
@@ -65,11 +67,6 @@ async function buildContext(userId: string) {
   ).map((s) => s.word);
 
   const daily = bank.filter((w) => w.source === "daily");
-  const humorousShare = daily.length ? daily.filter((w) => w.category === "humorous").length / daily.length : 0;
-  // Don't open with a humorous word, and never do two in a row.
-  const lastWasHumorous = daily[0]?.category === "humorous";
-  const category: Category =
-    daily.length >= 1 && !lastWasHumorous && humorousShare < HUMOROUS_SHARE ? "humorous" : "practical";
 
   // Rotate to the semantic domain least covered by recent daily words.
   const recentDomains = daily.slice(0, 24).map((w) => w.domain);
@@ -93,7 +90,6 @@ async function buildContext(userId: string) {
     known: new Set([...bank.map((w) => w.word.toLowerCase()), ...skipped]),
     bankWords: bank.slice(0, 250).map((w) => w.word),
     skippedWords: skipped.slice(0, 100),
-    category,
     domain,
     posCounts,
     struggles,
@@ -115,7 +111,8 @@ export async function canReplaceDailyWord(userId: string) {
 
 /**
  * Asks the model for candidates, then verifies them against a real dictionary
- * and returns the first one that exists and isn't already in the bank.
+ * and real-world usage, returning the first that exists, is common enough to be
+ * useful, and isn't already in the bank.
  * Exactly one AI call per invocation.
  */
 export async function pickDailyWord(userId: string) {
@@ -132,8 +129,8 @@ export async function pickDailyWord(userId: string) {
     model: DAILY_MODEL,
     output: Output.object({ schema: candidateSchema }),
     prompt: buildPrompt(ctx),
-    maxOutputTokens: 1000,
-    temperature: 0.9,
+    maxOutputTokens: 2500,
+    temperature: 0.7,
   });
 
   await db
@@ -146,9 +143,17 @@ export async function pickDailyWord(userId: string) {
     return w && !w.includes(" ") && !ctx.known.has(w);
   });
 
+  const frequencies = await Promise.all(fresh.map((c) => wordFrequency(c.word)));
+
   const reasons: string[] = [];
   let unverified: (typeof fresh)[number] | undefined;
-  for (const c of fresh) {
+  for (const [i, c] of fresh.entries()) {
+    // If the frequency service is down (null), rely on the prompt rather than lose the day's word.
+    const frequency = frequencies[i];
+    if (frequency !== null && frequency < MIN_FREQUENCY) {
+      reasons.push(`${c.word}: too rare (${frequency}/M)`);
+      continue;
+    }
     const result = await lookupWord(c.word);
     if (result.status === "missing") {
       reasons.push(`${c.word}: not in dictionary`);
@@ -173,7 +178,6 @@ export async function pickDailyWord(userId: string) {
       definition: c.definition,
       dictionaryDefinition: meaning.definition,
       example: c.example,
-      category: ctx.category,
       domain: ctx.domain,
       why: c.why,
     };
@@ -191,7 +195,6 @@ export async function pickDailyWord(userId: string) {
       definition: unverified.definition,
       dictionaryDefinition: null,
       example: unverified.example,
-      category: ctx.category,
       domain: ctx.domain,
       why: unverified.why,
     };

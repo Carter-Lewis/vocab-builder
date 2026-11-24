@@ -51,9 +51,9 @@ export function Placement() {
           One good word a day, chosen for you.
         </h1>
         <p className="mt-5 leading-relaxed text-ink-soft">
-          Each day you&apos;ll get a word picked to fill a gap in your vocabulary — mostly practical, some
-          delightfully silly but still usable. Every word lands in your bank and comes back for review just before
-          you&apos;d forget it.
+          Each day you&apos;ll get a word picked to fill a gap in your vocabulary — one you&apos;ll
+          actually read, hear, and use. Every word lands in your bank and comes back for review just before you&apos;d
+          forget it.
         </p>
         <p className="mt-4 leading-relaxed text-ink-soft">
           First, a quick 18-word check so your words start at the right level. Tap <em>Not sure</em> rather than

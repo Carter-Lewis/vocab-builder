@@ -1,13 +1,12 @@
 import { z } from "zod";
-import type { Category } from "@/db/schema";
 
 const LEVEL_LABELS: Record<number, string> = {
   1: "building a strong everyday vocabulary",
   2: "comfortable with everyday words, ready for more precise ones",
   3: "solid general vocabulary, ready for educated-adult words",
-  4: "strong vocabulary; ready for sophisticated words",
-  5: "advanced vocabulary; ready for rare but usable words",
-  6: "exceptional vocabulary; only genuinely uncommon words will teach anything",
+  4: "strong vocabulary; ready for sophisticated words that still come up regularly",
+  5: "advanced vocabulary; ready for the harder words found in quality journalism and essays",
+  6: "exceptional vocabulary; offer the most demanding words that educated people still actually use",
 };
 
 export const candidateSchema = z.object({
@@ -24,7 +23,7 @@ export const candidateSchema = z.object({
       }),
     )
     .min(3)
-    .max(6),
+    .max(15),
 });
 
 export type PromptContext = {
@@ -33,7 +32,6 @@ export type PromptContext = {
   known: Set<string>;
   bankWords: string[];
   skippedWords: string[];
-  category: Category;
   domain: string;
   posCounts: Record<string, number>;
   struggles: string[];
@@ -52,16 +50,15 @@ Words already in their bank (never suggest these): ${ctx.bankWords.join(", ") ||
 Words they skipped (never suggest these): ${ctx.skippedWords.join(", ") || "(none)"}
 Part-of-speech mix so far: ${pos || "(none yet)"} — favor whichever is underrepresented.
 Words they keep getting wrong in review: ${ctx.struggles.join(", ") || "(none)"} — a word in a related area that sharpens the distinction could help.
-Placement-test words they didn't know: ${unusedPlacement.join(", ") || "(none)"} — these are known gaps; you may suggest one directly.
+Placement-test words they didn't know: ${unusedPlacement.join(", ") || "(none)"} — these are known gaps; suggest one only if it passes the usefulness test below.
 
-Today's category: ${ctx.category.toUpperCase()}.
-${
-  ctx.category === "humorous"
-    ? "Pick a delightfully funny-sounding or playful word that is still genuinely usable in conversation or writing (e.g. the register of 'kerfuffle', 'discombobulated', 'snollygoster', 'bumfuzzle', 'lollygag'). Not crude, not archaic to the point of uselessness."
-    : "Pick a genuinely useful word a well-read adult would recognize and that lets the learner say something more precisely than they could before. Not jargon, not obscure for its own sake."
-}
+Usefulness test — every word must pass all of these:
+- It comes up regularly in current books, news, essays, meetings, or conversation.
+- The learner could say it to a friend, or use it in an email, paper, or presentation, and be understood without sounding odd or showy.
+- It says something more precisely than the simpler words they already use.
+Never suggest silly or novelty words, archaic or literary curiosities, technical jargon, slang, or "impressive" words people rarely use (e.g. not 'snollygoster', 'kerfuffle', 'tergiversate', 'pulchritude', 'sesquipedalian'). Aim for the register of 'pragmatic', 'nuance', 'candid', 'mitigate', 'tenuous', 'exacerbate', 'obfuscate'; don't just repeat these examples.
 Today's theme: ${ctx.domain}.
 
-Calibrate difficulty to the level: the word should be just beyond what they likely know.
-Return 5 candidates, best first. Each must be a real dictionary headword (single word), with a plain definition, a natural example sentence, and why it fills a gap.`;
+Usefulness comes first. Among words that pass the test, prefer ones the learner may not fully command at their level; never reach for a rarer word just to add difficulty.
+Return 12 candidates, most useful first. Each must be a real dictionary headword (single word), with a plain definition, a natural example sentence, and why it fills a gap.`;
 }
