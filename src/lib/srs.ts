@@ -11,6 +11,15 @@ export function wordStatus(w: Pick<Word, "reps" | "intervalDays" | "correctCount
   return "learning";
 }
 
+/** For a word the user already knew: starts mastered, with an occasional review to confirm it. */
+export function scheduleKnown(now = new Date()) {
+  return {
+    reps: 3,
+    intervalDays: MASTERED_INTERVAL_DAYS,
+    dueAt: new Date(now.getTime() + MASTERED_INTERVAL_DAYS * DAY_MS),
+  };
+}
+
 /** Simplified SM-2 for a pass/fail answer. */
 export function schedule(w: Pick<Word, "ease" | "intervalDays" | "reps">, correct: boolean, now = new Date()) {
   if (!correct) {

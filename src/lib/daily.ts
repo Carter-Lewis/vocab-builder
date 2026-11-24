@@ -2,7 +2,7 @@ import "server-only";
 import { generateText, Output } from "ai";
 import { and, desc, eq, gt, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { aiUsage, type Category, profiles, words } from "@/db/schema";
+import { aiUsage, type Category, profiles, skippedWords, words } from "@/db/schema";
 import { buildPrompt, candidateSchema } from "./daily-prompt";
 import { lookupWord, pickMeaning } from "./dictionary";
 
@@ -14,6 +14,10 @@ export const DAILY_MODEL = "google/gemini-2.5-flash-lite";
 // Hard cap on AI calls per user per rolling 24h (covers retries after failures).
 // Worst case 6 × 30 days × ~$0.0002 ≈ 4¢/month; normally it's one call a day.
 export const MAX_AI_CALLS_PER_DAY = 6;
+
+// Replacing a known/skipped word stops this many calls short of the cap, so swapping
+// late at night can't use up tomorrow's word.
+const RESERVED_AI_CALLS = 2;
 
 // Roughly 1 in 3 daily words is humorous-but-usable.
 const HUMOROUS_SHARE = 0.33;
@@ -52,6 +56,14 @@ async function buildContext(userId: string) {
     .where(eq(words.userId, userId))
     .orderBy(desc(words.createdAt));
 
+  const skipped = (
+    await db
+      .select({ word: skippedWords.word })
+      .from(skippedWords)
+      .where(eq(skippedWords.userId, userId))
+      .orderBy(desc(skippedWords.createdAt))
+  ).map((s) => s.word);
+
   const daily = bank.filter((w) => w.source === "daily");
   const humorousShare = daily.length ? daily.filter((w) => w.category === "humorous").length / daily.length : 0;
   // Don't open with a humorous word, and never do two in a row.
@@ -78,13 +90,27 @@ async function buildContext(userId: string) {
   return {
     level: profile?.level ?? 3,
     placementMissed: profile?.placementMissed ?? [],
-    known: new Set(bank.map((w) => w.word.toLowerCase())),
+    known: new Set([...bank.map((w) => w.word.toLowerCase()), ...skipped]),
     bankWords: bank.slice(0, 250).map((w) => w.word),
+    skippedWords: skipped.slice(0, 100),
     category,
     domain,
     posCounts,
     struggles,
   };
+}
+
+async function aiCallsToday(userId: string) {
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const [{ count }] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(aiUsage)
+    .where(and(eq(aiUsage.userId, userId), gt(aiUsage.createdAt, since)));
+  return count;
+}
+
+export async function canReplaceDailyWord(userId: string) {
+  return (await aiCallsToday(userId)) < MAX_AI_CALLS_PER_DAY - RESERVED_AI_CALLS;
 }
 
 /**
@@ -93,12 +119,7 @@ async function buildContext(userId: string) {
  * Exactly one AI call per invocation.
  */
 export async function pickDailyWord(userId: string) {
-  const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
-  const [{ count }] = await db
-    .select({ count: sql<number>`count(*)::int` })
-    .from(aiUsage)
-    .where(and(eq(aiUsage.userId, userId), gt(aiUsage.createdAt, since)));
-  if (count >= MAX_AI_CALLS_PER_DAY) {
+  if ((await aiCallsToday(userId)) >= MAX_AI_CALLS_PER_DAY) {
     throw new AiCapError("Daily AI limit reached");
   }
 
@@ -139,6 +160,10 @@ export async function pickDailyWord(userId: string) {
       continue;
     }
     const { entry } = result;
+    if (ctx.known.has(entry.word.toLowerCase())) {
+      reasons.push(`${c.word}: already known`);
+      continue;
+    }
     const meaning = pickMeaning(entry, c.partOfSpeech);
     return {
       word: entry.word,

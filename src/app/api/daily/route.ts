@@ -1,9 +1,11 @@
 import { and, eq, lte, or, sql } from "drizzle-orm";
 import { NextResponse, type NextRequest } from "next/server";
+import { z } from "zod";
 import { db } from "@/db";
-import { dailyWords, words } from "@/db/schema";
+import { dailyWords, skippedWords, words } from "@/db/schema";
 import { requireUser } from "@/lib/auth";
-import { AiCapError, pickDailyWord } from "@/lib/daily";
+import { AiCapError, canReplaceDailyWord, pickDailyWord } from "@/lib/daily";
+import { scheduleKnown } from "@/lib/srs";
 
 const STALE_PENDING_MS = 90_000;
 const DAY_MS = 86_400_000;
@@ -23,6 +25,38 @@ async function dueCount(userId: string) {
   return n;
 }
 
+function slot(userId: string, date: string) {
+  return and(eq(dailyWords.userId, userId), eq(dailyWords.date, date));
+}
+
+/** Picks a word for a slot the caller has already claimed as pending. */
+async function fillSlot(userId: string, date: string) {
+  const key = slot(userId, date);
+  try {
+    const picked = await pickDailyWord(userId);
+    // First review is tomorrow — today is for reading it.
+    const [word] = await db
+      .insert(words)
+      .values({ ...picked, userId, source: "daily", dueAt: new Date(Date.now() + DAY_MS) })
+      .returning();
+    await db.update(dailyWords).set({ status: "ready", wordId: word.id, updatedAt: new Date() }).where(key);
+    return NextResponse.json({ status: "ready", word, dueCount: await dueCount(userId) });
+  } catch (e) {
+    await db.update(dailyWords).set({ status: "failed", updatedAt: new Date() }).where(key);
+    if (e instanceof AiCapError) {
+      return NextResponse.json(
+        { status: "failed", error: "Today's word limit was reached. Try again tomorrow." },
+        { status: 429 },
+      );
+    }
+    console.error("[daily] generation failed", e);
+    return NextResponse.json(
+      { status: "failed", error: "Couldn't find today's word. Try again in a moment." },
+      { status: 500 },
+    );
+  }
+}
+
 export async function GET(req: NextRequest) {
   const { userId, error } = await requireUser();
   if (error) return error;
@@ -32,7 +66,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Invalid date" }, { status: 400 });
   }
 
-  const key = and(eq(dailyWords.userId, userId), eq(dailyWords.date, date));
+  const key = slot(userId, date);
   const [existing] = await db.select().from(dailyWords).where(key);
 
   if (existing?.status === "ready") {
@@ -68,27 +102,57 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ status: "pending" }, { status: 202 });
   }
 
-  try {
-    const picked = await pickDailyWord(userId);
-    // First review is tomorrow — today is for reading it.
-    const [word] = await db
-      .insert(words)
-      .values({ ...picked, userId, source: "daily", dueAt: new Date(Date.now() + DAY_MS) })
-      .returning();
-    await db.update(dailyWords).set({ status: "ready", wordId: word.id, updatedAt: new Date() }).where(key);
-    return NextResponse.json({ status: "ready", word, dueCount: await dueCount(userId) });
-  } catch (e) {
-    await db.update(dailyWords).set({ status: "failed", updatedAt: new Date() }).where(key);
-    if (e instanceof AiCapError) {
-      return NextResponse.json(
-        { status: "failed", error: "Today's word limit was reached. Try again tomorrow." },
-        { status: 429 },
-      );
-    }
-    console.error("[daily] generation failed", e);
-    return NextResponse.json(
-      { status: "failed", error: "Couldn't find today's word. Try again in a moment." },
-      { status: 500 },
-    );
+  return fillSlot(userId, date);
+}
+
+const resolution = z.object({
+  date: z.string().refine(isPlausibleLocalDate),
+  wordId: z.number().int(),
+  action: z.enum(["known", "skip"]),
+});
+
+/** Resolves today's word as already known (kept in the bank) or skipped (removed), then picks another. */
+export async function POST(req: Request) {
+  const { userId, error } = await requireUser();
+  if (error) return error;
+
+  const parsed = resolution.safeParse(await req.json());
+  if (!parsed.success) return NextResponse.json({ error: "Invalid request" }, { status: 400 });
+  const { date, wordId, action } = parsed.data;
+  const key = slot(userId, date);
+
+  // Claim the slot so a double tap or second tab can't resolve the same word twice.
+  const claimed = await db
+    .update(dailyWords)
+    .set({ status: "pending", wordId: null, updatedAt: new Date() })
+    .where(and(key, eq(dailyWords.status, "ready"), eq(dailyWords.wordId, wordId)))
+    .returning();
+  if (claimed.length === 0) {
+    return NextResponse.json({ error: "Today's word has changed." }, { status: 409 });
   }
+
+  const owned = and(eq(words.id, wordId), eq(words.userId, userId));
+  let replace: boolean;
+  try {
+    replace = await canReplaceDailyWord(userId);
+    if (action === "known") {
+      await db.update(words).set(scheduleKnown()).where(owned);
+    } else {
+      const [w] = await db.select({ word: words.word }).from(words).where(owned);
+      if (w) {
+        await db.insert(skippedWords).values({ userId, word: w.word.toLowerCase() }).onConflictDoNothing();
+        await db.delete(words).where(owned);
+      }
+    }
+  } catch (e) {
+    console.error("[daily] resolving word failed", e);
+    await db.update(dailyWords).set({ status: "ready", wordId, updatedAt: new Date() }).where(key);
+    return NextResponse.json({ error: "Couldn't update today's word. Try again in a moment." }, { status: 500 });
+  }
+
+  if (!replace) {
+    await db.update(dailyWords).set({ status: "ready", updatedAt: new Date() }).where(key);
+    return NextResponse.json({ status: "ready", word: null, dueCount: await dueCount(userId) });
+  }
+  return fillSlot(userId, date);
 }

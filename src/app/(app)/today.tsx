@@ -53,6 +53,31 @@ export function Today() {
     void load();
   }, [load]);
 
+  async function resolve(wordId: number, action: "known" | "skip") {
+    setState({ kind: "loading" });
+    window.scrollTo({ top: 0 });
+    try {
+      const res = await fetch("/api/daily", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ date: localDate(), wordId, action }),
+      });
+      if (res.status === 409 || res.status === 400) {
+        // Already resolved elsewhere, or the day rolled over — show the current word.
+        await load();
+        return;
+      }
+      const data = await res.json();
+      if (!res.ok) {
+        setState({ kind: "error", message: data.error ?? "Something went wrong." });
+        return;
+      }
+      setState({ kind: "ready", word: data.word, dueCount: data.dueCount });
+    } catch {
+      setState({ kind: "error", message: "Something went wrong." });
+    }
+  }
+
   return (
     <div className="pt-6">
       <p className="h-5 text-sm text-muted">{dateLabel}</p>
@@ -70,10 +95,12 @@ export function Today() {
       )}
 
       {state.kind === "ready" && !state.word && (
-        <p className="mt-10 text-ink-soft">You removed today&apos;s word from your bank. A new one arrives tomorrow.</p>
+        <p className="mt-10 text-ink-soft">That&apos;s all for today. A new word arrives tomorrow.</p>
       )}
 
-      {state.kind === "ready" && state.word && <WordOfDay word={state.word} dueCount={state.dueCount} />}
+      {state.kind === "ready" && state.word && (
+        <WordOfDay key={state.word.id} word={state.word} dueCount={state.dueCount} onResolve={resolve} />
+      )}
     </div>
   );
 }
@@ -89,7 +116,15 @@ function Loading() {
   );
 }
 
-function WordOfDay({ word, dueCount }: { word: Word; dueCount: number }) {
+function WordOfDay({
+  word,
+  dueCount,
+  onResolve,
+}: {
+  word: Word;
+  dueCount: number;
+  onResolve: (wordId: number, action: "known" | "skip") => void;
+}) {
   return (
     <article className="rise mt-6">
       <WordHeading w={word} />
@@ -102,6 +137,21 @@ function WordOfDay({ word, dueCount }: { word: Word; dueCount: number }) {
           </p>
         )}
       </section>
+
+      <div className="mt-4 flex gap-2">
+        <button
+          onClick={() => onResolve(word.id, "known")}
+          className="flex-1 rounded-full bg-sage-soft px-4 py-2.5 text-sm font-medium text-sage active:scale-[0.98]"
+        >
+          I know this already
+        </button>
+        <button
+          onClick={() => onResolve(word.id, "skip")}
+          className="flex-1 rounded-full border border-line bg-surface px-4 py-2.5 text-sm font-medium text-ink-soft active:scale-[0.98]"
+        >
+          Skip this word
+        </button>
+      </div>
 
       {word.why && (
         <section className="mt-5 px-1">

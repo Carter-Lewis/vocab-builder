@@ -71,6 +71,18 @@ export const dailyWords = pgTable(
   (t) => [primaryKey({ columns: [t.userId, t.date] })],
 );
 
+// Daily words the user passed on, kept so they're never suggested again.
+export const skippedWords = pgTable(
+  "skipped_words",
+  {
+    userId: text("user_id").notNull(),
+    // Lowercase.
+    word: text("word").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.word] })],
+);
+
 // Every AI call is logged so we can enforce a hard cap and see real spend.
 export const aiUsage = pgTable(
   "ai_usage",

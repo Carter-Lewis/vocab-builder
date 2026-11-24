@@ -32,6 +32,7 @@ export type PromptContext = {
   placementMissed: string[];
   known: Set<string>;
   bankWords: string[];
+  skippedWords: string[];
   category: Category;
   domain: string;
   posCounts: Record<string, number>;
@@ -48,6 +49,7 @@ export function buildPrompt(ctx: PromptContext) {
 
 Learner level: ${ctx.level}/6 — ${LEVEL_LABELS[ctx.level]}.
 Words already in their bank (never suggest these): ${ctx.bankWords.join(", ") || "(none yet)"}
+Words they skipped (never suggest these): ${ctx.skippedWords.join(", ") || "(none)"}
 Part-of-speech mix so far: ${pos || "(none yet)"} — favor whichever is underrepresented.
 Words they keep getting wrong in review: ${ctx.struggles.join(", ") || "(none)"} — a word in a related area that sharpens the distinction could help.
 Placement-test words they didn't know: ${unusedPlacement.join(", ") || "(none)"} — these are known gaps; you may suggest one directly.
