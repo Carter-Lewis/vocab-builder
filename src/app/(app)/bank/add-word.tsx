@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import type { Category } from "@/db/schema";
 import type { Word } from "@/lib/types";
 import { Sheet } from "@/components/sheet";
 
@@ -15,7 +14,6 @@ export function AddWord({ onClose, onAdded }: { onClose: () => void; onAdded: (w
   const [definition, setDefinition] = useState("");
   const [partOfSpeech, setPartOfSpeech] = useState("");
   const [example, setExample] = useState("");
-  const [category, setCategory] = useState<Category>("practical");
   const [notes, setNotes] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -61,7 +59,6 @@ export function AddWord({ onClose, onAdded }: { onClose: () => void; onAdded: (w
         phonetic: entry?.phonetic || undefined,
         audioUrl: entry?.audioUrl || undefined,
         example: example || undefined,
-        category,
         notes: notes || undefined,
       }),
     });
@@ -144,19 +141,6 @@ export function AddWord({ onClose, onAdded }: { onClose: () => void; onAdded: (w
             placeholder="Notes (optional)"
             className={field + " resize-none"}
           />
-          <div className="flex gap-2">
-            {(["practical", "humorous"] as const).map((c) => (
-              <button
-                key={c}
-                onClick={() => setCategory(c)}
-                className={`flex-1 rounded-full border py-2 text-sm capitalize ${
-                  category === c ? "border-ink bg-ink text-bg" : "border-line bg-surface text-ink-soft"
-                }`}
-              >
-                {c}
-              </button>
-            ))}
-          </div>
           <button
             onClick={save}
             disabled={busy || !definition.trim()}

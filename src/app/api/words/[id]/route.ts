@@ -7,7 +7,6 @@ import { requireUser } from "@/lib/auth";
 
 const patch = z.object({
   notes: z.string().trim().max(2000).nullable().optional(),
-  category: z.enum(["practical", "humorous"]).optional(),
   definition: z.string().trim().min(1).max(500).optional(),
   example: z.string().trim().max(500).nullable().optional(),
 });

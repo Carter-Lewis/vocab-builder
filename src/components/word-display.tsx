@@ -1,19 +1,6 @@
 "use client";
 
 import { useRef } from "react";
-import type { Category } from "@/db/schema";
-
-export function CategoryPill({ category }: { category: Category }) {
-  return (
-    <span
-      className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${
-        category === "humorous" ? "bg-clay-soft text-clay" : "bg-sage-soft text-sage"
-      }`}
-    >
-      {category === "humorous" ? "Humorous" : "Practical"}
-    </span>
-  );
-}
 
 export function AudioButton({ src }: { src: string }) {
   const audio = useRef<HTMLAudioElement | null>(null);
@@ -41,7 +28,6 @@ type Displayable = {
   phonetic: string | null;
   audioUrl: string | null;
   partOfSpeech: string | null;
-  category: Category;
 };
 
 export function WordHeading({ w, size = "lg" }: { w: Displayable; size?: "lg" | "md" }) {
@@ -52,7 +38,6 @@ export function WordHeading({ w, size = "lg" }: { w: Displayable; size?: "lg" | 
         {w.phonetic && <span className="font-serif italic">{w.phonetic}</span>}
         {w.audioUrl && <AudioButton src={w.audioUrl} />}
         {w.partOfSpeech && <span className="italic text-muted">{w.partOfSpeech}</span>}
-        <CategoryPill category={w.category} />
       </div>
     </div>
   );

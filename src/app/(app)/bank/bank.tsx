@@ -1,13 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import type { Category } from "@/db/schema";
-import { CategoryPill, WordHeading } from "@/components/word-display";
+import { WordHeading } from "@/components/word-display";
 import { statusOf, type Word } from "@/lib/types";
 import { Sheet } from "@/components/sheet";
 import { AddWord } from "./add-word";
 
-type CategoryFilter = "all" | Category;
 type StatusFilter = "all" | "new" | "learning" | "mastered";
 
 const STATUS_STYLES: Record<Exclude<StatusFilter, "all">, string> = {
@@ -19,7 +17,6 @@ const STATUS_STYLES: Record<Exclude<StatusFilter, "all">, string> = {
 export function Bank() {
   const [words, setWords] = useState<Word[] | null>(null);
   const [query, setQuery] = useState("");
-  const [category, setCategory] = useState<CategoryFilter>("all");
   const [status, setStatus] = useState<StatusFilter>("all");
   const [pos, setPos] = useState("all");
   const [open, setOpen] = useState<Word | null>(null);
@@ -40,7 +37,6 @@ export function Bank() {
     const q = query.trim().toLowerCase();
     return (words ?? []).filter(
       (w) =>
-        (category === "all" || w.category === category) &&
         (status === "all" || statusOf(w) === status) &&
         (pos === "all" || w.partOfSpeech === pos) &&
         (!q ||
@@ -48,7 +44,7 @@ export function Bank() {
           w.definition.toLowerCase().includes(q) ||
           w.notes?.toLowerCase().includes(q)),
     );
-  }, [words, query, category, status, pos]);
+  }, [words, query, status, pos]);
 
   function upsert(w: Word) {
     setWords((ws) => {
@@ -83,16 +79,6 @@ export function Bank() {
       />
 
       <div className="-mx-5 mt-3 flex gap-2 overflow-x-auto px-5 pb-1 [scrollbar-width:none]">
-        <Chips
-          value={category}
-          onChange={setCategory}
-          options={[
-            ["all", "All"],
-            ["practical", "Practical"],
-            ["humorous", "Humorous"],
-          ]}
-        />
-        <span className="w-px shrink-0 bg-line" />
         <Chips
           value={status}
           onChange={setStatus}
@@ -216,7 +202,7 @@ function WordSheet({
   const [notes, setNotes] = useState(word.notes ?? "");
   const [confirming, setConfirming] = useState(false);
 
-  async function patch(body: Partial<Pick<Word, "notes" | "category">>) {
+  async function patch(body: Pick<Word, "notes">) {
     const res = await fetch(`/api/words/${word.id}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
@@ -263,14 +249,7 @@ function WordSheet({
         className="mt-2 w-full resize-none rounded-2xl border border-line bg-surface p-3.5 leading-relaxed placeholder:text-muted focus:border-clay focus:outline-none"
       />
 
-      <div className="mt-4 flex items-center justify-between">
-        <button
-          onClick={() => patch({ category: word.category === "humorous" ? "practical" : "humorous" })}
-          className="flex items-center gap-2 text-sm text-ink-soft"
-        >
-          <CategoryPill category={word.category} />
-          <span className="underline decoration-line underline-offset-4">switch</span>
-        </button>
+      <div className="mt-4 flex items-center justify-end">
         {confirming ? (
           <span className="flex gap-3 text-sm">
             <button onClick={() => setConfirming(false)} className="text-ink-soft">

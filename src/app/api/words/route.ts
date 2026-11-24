@@ -20,7 +20,6 @@ const newWord = z.object({
   phonetic: z.string().trim().max(80).optional(),
   audioUrl: z.url().optional(),
   example: z.string().trim().max(500).optional(),
-  category: z.enum(["practical", "humorous"]),
   notes: z.string().trim().max(2000).optional(),
 });
 
